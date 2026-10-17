@@ -1,0 +1,17 @@
+{
+  "name": "sala-equipo",
+  "version": "1.0.0",
+  "description": "Sala compartida: Jorge, Nico y sus dos Claude se coordinan y ven el estado del otro",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pg": "^8.12.0"
+  }
+}

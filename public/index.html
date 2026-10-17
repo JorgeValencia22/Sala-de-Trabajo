@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sala del Equipo</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --ink:#1c1f26; --mut:#6b7280; --line:#e3e6eb; --acc:#4f46e5; --ok:#16a34a; --warn:#d97706; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12141a; --card:#1b1e26; --ink:#e8eaf0; --mut:#9aa1b0; --line:#2a2f3a; --acc:#818cf8; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.45 system-ui, sans-serif; }
+  header { display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-bottom:1px solid var(--line); background:var(--card); }
+  h1 { font-size:17px; margin:0; } h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--mut); margin:0 0 8px; }
+  main { max-width:1100px; margin:0 auto; padding:16px; display:grid; gap:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; }
+  .team { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; }
+  .who { font-weight:600; display:flex; align-items:center; gap:6px; }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--mut); } .dot.on { background:var(--ok); }
+  .doing { margin:6px 0 2px; } .meta { color:var(--mut); font-size:12px; } .blocked { color:var(--warn); font-size:13px; }
+  .cols { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:10px; }
+  .task { border:1px solid var(--line); border-radius:8px; padding:8px; margin-bottom:8px; background:var(--bg); }
+  .task b { display:block; } .task select, .task button { font-size:12px; margin-top:6px; }
+  #chat { height:340px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; padding-right:4px; }
+  .msg { border-left:3px solid var(--line); padding-left:8px; white-space:pre-wrap; word-break:break-word; }
+  .msg.claude { border-color:var(--acc); } .msg .h { font-size:12px; color:var(--mut); }
+  form { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+  input, select, textarea, button { font:inherit; color:var(--ink); background:var(--card); border:1px solid var(--line); border-radius:7px; padding:7px 9px; }
+  textarea { flex:1; min-width:200px; resize:vertical; } button { cursor:pointer; background:var(--acc); color:#fff; border:0; }
+  button.sec { background:var(--card); color:var(--ink); border:1px solid var(--line); }
+  #login { max-width:380px; margin:12vh auto; } #login input, #login select, #login button { width:100%; margin-top:10px; }
+  .hide { display:none !important; }
+</style>
+</head>
+<body>
+<div id="login" class="card hide">
+  <h1>Sala del Equipo</h1>
+  <input id="k" type="password" placeholder="Clave del equipo">
+  <select id="w"></select>
+  <button id="go">Entrar</button>
+  <div id="err" class="meta"></div>
+</div>
+
+<div id="app" class="hide">
+  <header>
+    <h1>Sala del Equipo</h1>
+    <span class="meta">Entras como <b id="me"></b> · <a href="#" id="out">salir</a></span>
+  </header>
+  <main>
+    <section><h2>Equipo ahora</h2><div class="team" id="team"></div>
+      <form id="stF" class="card" style="margin-top:10px">
+        <input id="stDo" placeholder="Qué estás haciendo ahora" style="flex:2;min-width:200px" maxlength="500">
+        <input id="stFi" placeholder="Archivos / carpeta que tocas" style="flex:1;min-width:150px" maxlength="500">
+        <input id="stBl" placeholder="¿Bloqueado? (opcional)" style="flex:1;min-width:150px" maxlength="300">
+        <button>Actualizar mi estado</button>
+      </form>
+    </section>
+    <section><h2>Tareas</h2>
+      <div class="cols" id="cols"></div>
+      <form id="tF" class="card">
+        <input id="tT" placeholder="Nueva tarea" style="flex:2;min-width:200px" maxlength="200" required>
+        <select id="tA"></select>
+        <button>Agregar</button>
+      </form>
+    </section>
+    <section><h2>Chat del equipo</h2>
+      <div class="card"><div id="chat"></div>
+        <form id="mF">
+          <select id="mTo"></select>
+          <textarea id="mT" rows="2" placeholder="Escribe un mensaje…" maxlength="4000" required></textarea>
+          <button>Enviar</button>
+        </form>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const STATES = [['pendiente','Pendiente'],['en-curso','En curso'],['listo','Listo']];
+let key = localStorage.getItem('sala_key') || '', me = localStorage.getItem('sala_who') || '';
+let members = {}, lastId = 0, chatIds = new Set(), timer;
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { ...opts, headers: { 'content-type':'application/json', 'x-team-key':key, 'x-who':me } });
+  if (r.status === 401) { logout(); throw new Error('clave'); }
+  return r.json();
+}
+const post = (p, b, m='POST') => api(p, { method:m, body: JSON.stringify({ ...b, who: me }) });
+const ago = (iso) => { if (!iso) return 'nunca'; const s = (Date.now()-new Date(iso))/1000;
+  return s<60?'hace segundos':s<3600?`hace ${Math.floor(s/60)} min`:s<86400?`hace ${Math.floor(s/3600)} h`:`hace ${Math.floor(s/86400)} d`; };
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text!=null) e.textContent = text; return e; };
+
+function logout() { clearInterval(timer); localStorage.removeItem('sala_key'); key=''; $('app').classList.add('hide'); showLogin(); }
+$('out').onclick = (e) => { e.preventDefault(); logout(); };
+
+function showLogin() {
+  $('login').classList.remove('hide');
+  const sel = $('w'); if (!sel.options.length) for (const [id,n] of Object.entries({jorge:'Jorge',nico:'Nico','claude-jorge':'Claude de Jorge','claude-nico':'Claude de Nico'})) sel.add(new Option(n,id));
+  if (me) sel.value = me;
+}
+$('go').onclick = async () => {
+  key = $('k').value.trim(); me = $('w').value;
+  const r = await fetch('/api/state', { headers:{ 'x-team-key':key, 'x-who':me } });
+  if (!r.ok) { $('err').textContent = 'Clave incorrecta'; return; }
+  localStorage.setItem('sala_key', key); localStorage.setItem('sala_who', me); start();
+};
+
+function start() {
+  $('login').classList.add('hide'); $('app').classList.remove('hide');
+  lastId = 0; chatIds = new Set(); $('chat').replaceChildren();
+  refresh(); timer = setInterval(refresh, 4000);
+}
+
+async function refresh() {
+  let s; try { s = await api('/api/state?since=' + lastId); } catch { return; }
+  members = s.members; $('me').textContent = members[me] || me;
+  if (!$('tA').options.length) {
+    $('tA').add(new Option('Sin asignar',''));
+    $('mTo').add(new Option('Para todos',''));
+    for (const [id,n] of Object.entries(members)) { $('tA').add(new Option(n,id)); $('mTo').add(new Option('Para '+n,id)); }
+  }
+  // equipo
+  const team = $('team'); team.replaceChildren();
+  for (const [id,n] of Object.entries(members)) {
+    const st = s.status[id] || {}, online = s.seen[id] && Date.now()-new Date(s.seen[id]) < 60000;
+    const c = el('div','card'), w = el('div','who'); w.append(el('span','dot'+(online?' on':'')), el('span',null,n));
+    c.append(w, el('div','doing', st.doing || 'Sin estado todavía'));
+    if (st.files) c.append(el('div','meta','📁 '+st.files));
+    if (st.blocked) c.append(el('div','blocked','⛔ '+st.blocked));
+    c.append(el('div','meta', `estado ${ago(st.updated)} · visto ${ago(s.seen[id])}`));
+    team.append(c);
+  }
+  // tareas
+  const cols = $('cols'); cols.replaceChildren();
+  for (const [sid,label] of STATES) {
+    const col = el('div','card'); col.append(el('h2',null,label));
+    for (const t of s.tasks.filter(t => t.state===sid)) {
+      const d = el('div','task'); d.append(el('b',null,t.title));
+      d.append(el('span','meta', (members[t.assignee]||'Sin asignar') + ' · ' + ago(t.updated)));
+      if (t.note) d.append(el('div','meta',t.note));
+      const sel = el('select'); for (const [v,l] of STATES) sel.add(new Option(l,v)); sel.value = t.state;
+      sel.onchange = () => post('/api/tasks/'+t.id, { state: sel.value }, 'PATCH').then(refresh);
+      const take = el('button','sec','Tomar'); take.onclick = () => post('/api/tasks/'+t.id, { assignee: me, state: 'en-curso' }, 'PATCH').then(refresh);
+      const del = el('button','sec','✕'); del.onclick = () => confirm('¿Borrar tarea?') && post('/api/tasks/'+t.id, {}, 'DELETE').then(refresh);
+      d.append(el('br'), sel, ' ', take, ' ', del); col.append(d);
+    }
+    cols.append(col);
+  }
+  // chat
+  const chat = $('chat'), atEnd = chat.scrollTop + chat.clientHeight >= chat.scrollHeight - 40;
+  for (const m of s.messages) {
+    if (chatIds.has(m.id)) continue; chatIds.add(m.id);
+    const d = el('div','msg'+(m.who.startsWith('claude')?' claude':''));
+    d.append(el('div','h', `${members[m.who]||m.who}${m.to?' → '+(members[m.to]||m.to):''} · ${new Date(m.at).toLocaleString('es-CL')}`), el('div',null,m.text));
+    chat.append(d);
+  }
+  lastId = Math.max(lastId, s.lastId);
+  if (atEnd) chat.scrollTop = chat.scrollHeight;
+}
+
+$('stF').onsubmit = async (e) => { e.preventDefault();
+  await post('/api/status', { doing:$('stDo').value, files:$('stFi').value, blocked:$('stBl').value }); refresh(); };
+$('tF').onsubmit = async (e) => { e.preventDefault();
+  await post('/api/tasks', { title:$('tT').value, assignee:$('tA').value }); $('tT').value=''; refresh(); };
+$('mF').onsubmit = async (e) => { e.preventDefault();
+  await post('/api/message', { text:$('mT').value, to:$('mTo').value }); $('mT').value=''; refresh(); };
+
+if (key && me) start(); else showLogin();
+</script>
+</body>
+</html>

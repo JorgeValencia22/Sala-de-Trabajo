@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: sala-equipo
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: TEAM_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sala-db
+          property: connectionString
+
+databases:
+  - name: sala-db
+    plan: free
